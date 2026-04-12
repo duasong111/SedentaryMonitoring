@@ -3,14 +3,14 @@ import psycopg2
 import psycopg2.extras
 from psycopg2.extras import DictCursor
 from database.Postgresql import get_postgres_connection
-from config import CODE_ERROR, CODE_SUCCESS
 
 class execuFunction():
     def _quote_identifier(self, identifier: str) -> str:
         """安全地给表名或列名加双引号"""
         if not identifier:
             raise ValueError("标识符不能为空")
-        return f'"{identifier.replace("\"", "\"\"")}"'
+        escaped = identifier.replace('"', '""')
+        return f'"{escaped}"'
 
     def add_data(self, dbName: str, insertData: list[dict]):
         """通用插入"""
@@ -77,3 +77,23 @@ class execuFunction():
             if 'conn' in locals():
                 conn.rollback()
             return {"success": False, "message": f"更新失败: {str(e)}"}
+
+    def insert_text_stastic(self, content, type_, latency_ms=0, status='success'):
+        """插入文本统计数据"""
+        if not content:
+            return {"success": False, "message": "内容不能为空"}
+
+        try:
+            conn = get_postgres_connection()
+            with conn.cursor() as cur:
+                query = """
+                    INSERT INTO user_text_stastic (content, type, status, latency_ms, created_time)
+                    VALUES (%s, %s, %s, %s, CURRENT_TIMESTAMP)
+                """
+                cur.execute(query, (content, type_, status, latency_ms))
+                conn.commit()
+                return {"success": True, "message": "插入成功"}
+        except Exception as e:
+            if 'conn' in locals():
+                conn.rollback()
+            return {"success": False, "message": f"插入失败: {str(e)}"}

@@ -3,7 +3,7 @@ import bcrypt
 
 def generate_password_hash(password: str) -> Tuple[bytes, bytes]:
     """生成 bcrypt 密码哈希和盐值"""
-    salt = bcrypt.gensalt()                    # 推荐使用 gensalt(rounds=12) 或更高
+    salt = bcrypt.gensalt()
     hashed = bcrypt.hashpw(password.encode('utf-8'), salt)
     return hashed, salt
 
