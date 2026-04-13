@@ -97,3 +97,100 @@ class execuFunction():
             if 'conn' in locals():
                 conn.rollback()
             return {"success": False, "message": f"插入失败: {str(e)}"}
+
+    def get_device_time(self, uuid):
+        """获取设备时间记录"""
+        try:
+            conn = get_postgres_connection()
+            with conn.cursor(cursor_factory=DictCursor) as cur:
+                sql = """
+                    SELECT * FROM device_time
+                    WHERE uuid = %s
+                """
+                cur.execute(sql, (uuid,))
+                row = cur.fetchone()
+                return dict(row) if row else None
+        except Exception as e:
+            return None
+
+    def create_or_update_device_time(self, device_id, uuid, state, distance_cm, event_timestamp):
+        """创建或更新设备时间记录"""
+        try:
+            conn = get_postgres_connection()
+            with conn.cursor(cursor_factory=DictCursor) as cur:
+                # 检查记录是否存在
+                existing = self.get_device_time(uuid)
+
+                if existing:
+                    # 更新记录
+                    last_timestamp = existing['event_timestamp']
+                    time_delta = event_timestamp - last_timestamp
+                    last_state = existing['state']
+
+                    presence_duration = existing['presence_duration']
+                    absence_duration = existing['absence_duration']
+
+                    if time_delta > 0:
+                        if last_state == '有人':
+                            presence_duration += time_delta
+                        else:
+                            absence_duration += time_delta
+
+                    sql = """
+                        UPDATE device_time
+                        SET state = %s,
+                            distance_cm = %s,
+                            last_update_time = CURRENT_TIMESTAMP,
+                            presence_duration = %s,
+                            absence_duration = %s,
+                            event_timestamp = %s
+                        WHERE uuid = %s
+                        RETURNING *
+                    """
+                    cur.execute(sql, (state, distance_cm, presence_duration, absence_duration, event_timestamp, uuid))
+                    conn.commit()
+                    updated_row = cur.fetchone()
+                    return {"success": True, "data": dict(updated_row) if updated_row else None}
+                else:
+                    # 创建新记录
+                    sql = """
+                        INSERT INTO device_time (device_id, uuid, state, distance_cm, start_time, last_update_time, presence_duration, absence_duration, event_timestamp)
+                        VALUES (%s, %s, %s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, 0, 0, %s)
+                        RETURNING *
+                    """
+                    cur.execute(sql, (device_id, uuid, state, distance_cm, event_timestamp))
+                    conn.commit()
+                    new_row = cur.fetchone()
+                    return {"success": True, "data": dict(new_row) if new_row else None}
+        except Exception as e:
+            if 'conn' in locals():
+                conn.rollback()
+            return {"success": False, "message": f"操作失败: {str(e)}"}
+
+    def get_device_stats(self, device_id_or_uuid):
+        """获取设备统计数据"""
+        try:
+            conn = get_postgres_connection()
+            with conn.cursor(cursor_factory=DictCursor) as cur:
+                sql = """
+                    SELECT
+                        id,
+                        device_id,
+                        uuid,
+                        state,
+                        distance_cm,
+                        start_time,
+                        last_update_time,
+                        presence_duration,
+                        absence_duration,
+                        (presence_duration + absence_duration) as total_duration,
+                        event_timestamp
+                    FROM device_time
+                    WHERE device_id = %s OR uuid = %s
+                    ORDER BY start_time DESC
+                """
+                cur.execute(sql, (device_id_or_uuid, device_id_or_uuid))
+                rows = cur.fetchall()
+                return [dict(row) for row in rows] if rows else []
+        except Exception as e:
+            return []

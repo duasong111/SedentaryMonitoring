@@ -5,6 +5,7 @@ from functions.user import LoginFunction, RegisterFunction
 from functions.speech_to_text import SpeechToTextFunction
 from functions.doubao import DoubaoFunction
 from functions.text_to_speech import TextToSpeechFunction
+from functions.device_time_static import DeviceTimeStaticFunction
 from database.operateFunction import execuFunction
 from flask_cors import CORS
 from http import HTTPStatus
@@ -18,6 +19,7 @@ db_function = execuFunction()
 speech_to_text = SpeechToTextFunction()
 doubao_func = DoubaoFunction()
 tts_func = TextToSpeechFunction()
+device_time_static = DeviceTimeStaticFunction()
 
 TextToSpeechFunction.start_tts_worker()
 TextToSpeechFunction.start_mqtt_thread()
@@ -139,6 +141,25 @@ def text_to_speech_dou():
 def serve_audio(filename):
     try:
         return tts_func.serve_audio(filename)
+    except Exception as e:
+        return create_response(HTTPStatus.INTERNAL_SERVER_ERROR, f"服务器错误: {str(e)}", False)
+
+
+# 设备时长统计接口
+@app.route("/api/static_time", methods=["POST"], strict_slashes=False)
+def static_time():
+    try:
+        data = request.get_json()
+        return device_time_static.process_device_event(data)
+    except Exception as e:
+        return create_response(HTTPStatus.INTERNAL_SERVER_ERROR, f"服务器错误: {str(e)}", False)
+
+
+# 获取设备统计数据
+@app.route("/api/device_stats/<uuid>", methods=["GET"], strict_slashes=False)
+def get_device_stats(uuid):
+    try:
+        return device_time_static.get_device_stats(uuid)
     except Exception as e:
         return create_response(HTTPStatus.INTERNAL_SERVER_ERROR, f"服务器错误: {str(e)}", False)
 

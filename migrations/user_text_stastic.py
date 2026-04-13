@@ -11,7 +11,7 @@ def create_user_text_stastic_table():
                 CREATE TABLE IF NOT EXISTS user_text_stastic (
                     id SERIAL PRIMARY KEY,
                     content TEXT NOT NULL,
-                    type VARCHAR(50) NOT NULL,  -- speech_to_text, text_to_speech, doubao_chat
+                    type VARCHAR(50) NOT NULL, 
                     status VARCHAR(20) DEFAULT 'success',
                     latency_ms FLOAT DEFAULT 0,
                     created_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL
