@@ -113,7 +113,7 @@ class execuFunction():
         except Exception as e:
             return None
 
-    def create_or_update_device_time(self, device_id, uuid, state, distance_cm, event_timestamp):
+    def create_or_update_device_time(self, device_id, uuid, state, distance_cm, event_timestamp, duration=0):
         """创建或更新设备时间记录"""
         try:
             conn = get_postgres_connection()
@@ -123,18 +123,23 @@ class execuFunction():
 
                 if existing:
                     # 更新记录
-                    last_timestamp = existing['event_timestamp']
-                    time_delta = event_timestamp - last_timestamp
-                    last_state = existing['state']
-
                     presence_duration = existing['presence_duration']
                     absence_duration = existing['absence_duration']
 
-                    if time_delta > 0:
-                        if last_state == '有人':
-                            presence_duration += time_delta
-                        else:
-                            absence_duration += time_delta
+                    # 如果是有人状态且有duration，直接使用设备发送的duration
+                    if state == '有人' and duration > 0:
+                        presence_duration = duration
+                    else:
+                        # 否则计算时间差
+                        last_timestamp = existing['event_timestamp']
+                        time_delta = event_timestamp - last_timestamp
+                        last_state = existing['state']
+
+                        if time_delta > 0:
+                            if last_state == '有人':
+                                presence_duration += time_delta
+                            else:
+                                absence_duration += time_delta
 
                     sql = """
                         UPDATE device_time
@@ -153,12 +158,13 @@ class execuFunction():
                     return {"success": True, "data": dict(updated_row) if updated_row else None}
                 else:
                     # 创建新记录
+                    presence_duration = duration if state == '有人' and duration > 0 else 0
                     sql = """
                         INSERT INTO device_time (device_id, uuid, state, distance_cm, start_time, last_update_time, presence_duration, absence_duration, event_timestamp)
-                        VALUES (%s, %s, %s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, 0, 0, %s)
+                        VALUES (%s, %s, %s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, %s, 0, %s)
                         RETURNING *
                     """
-                    cur.execute(sql, (device_id, uuid, state, distance_cm, event_timestamp))
+                    cur.execute(sql, (device_id, uuid, state, distance_cm, presence_duration, event_timestamp))
                     conn.commit()
                     new_row = cur.fetchone()
                     return {"success": True, "data": dict(new_row) if new_row else None}

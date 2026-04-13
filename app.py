@@ -54,6 +54,44 @@ def transcribe():
         return create_response(HTTPStatus.INTERNAL_SERVER_ERROR, f"服务器错误: {str(e)}", False)
 
 
+# @app.route("/api/wake_detect", methods=["POST"], strict_slashes=False)
+# def wake_detect():
+#     try:
+#         audio_bytes = request.get_data()
+#         # 从查询参数获取 session_key，避免与 request.get_data() 冲突
+#         session_key = request.args.get('session_key')
+#
+#         print(f"唤醒检测请求 - session_key: {session_key}")
+#
+#         # 调用唤醒检测
+#         result = speech_to_text.wake_detect(audio_bytes, session_key=session_key)
+#
+#         # 获取响应数据
+#         # result 是 (response_obj, status_code)
+#         response_obj, status_code = result
+#         response_data = response_obj.get_json()
+#
+#         if response_data and response_data.get('success'):
+#             wake_data = response_data.get('data', {})
+#
+#             print(f"唤醒检测结果 - is_session_active: {wake_data.get('is_session_active')}, should_play_wake: {wake_data.get('should_play_wake')}")
+#
+#             # 检查是否需要播放唤醒提示语
+#             if wake_data.get('should_play_wake'):
+#                 # 播放"我在"提示音
+#                 tts_func.text_to_speech("我在")
+#             elif wake_data.get('is_session_active') and wake_data.get('text'):
+#                 # 会话活跃且有文字，调用豆包API然后播放豆包回复
+#                 text = wake_data.get('text')
+#                 answer = doubao_func.chat_with_doubao(text)
+#                 if answer:
+#                     tts_func.text_to_speech(answer)
+#
+#         return result
+#     except Exception as e:
+#         return create_response(HTTPStatus.INTERNAL_SERVER_ERROR, f"服务器错误: {str(e)}", False)
+#
+
 @app.route("/api/transcribe_tts", methods=["POST"], strict_slashes=False)
 def transcribe_tts():
     try:
