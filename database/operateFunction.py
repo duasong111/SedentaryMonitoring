@@ -200,3 +200,250 @@ class execuFunction():
                 return [dict(row) for row in rows] if rows else []
         except Exception as e:
             return []
+
+    def get_sedentary_reminder_settings(self, device_id):
+        """获取设备提醒设置"""
+        try:
+            conn = get_postgres_connection()
+            with conn.cursor(cursor_factory=DictCursor) as cur:
+                sql = """
+                    SELECT * FROM sedentary_reminder_settings
+                    WHERE device_id = %s
+                    LIMIT 1
+                """
+                cur.execute(sql, (device_id,))
+                row = cur.fetchone()
+                return dict(row) if row else None
+        except Exception as e:
+            return None
+
+    def create_or_update_sedentary_settings(self, device_id, sedentary_threshold=None, 
+                                            reminder_interval=None, reminder_voice=None,
+                                            voice_list=None, is_enabled=None):
+        """创建或更新提醒设置"""
+        try:
+            conn = get_postgres_connection()
+            with conn.cursor(cursor_factory=DictCursor) as cur:
+                existing = self.get_sedentary_reminder_settings(device_id)
+                
+                if existing:
+                    # 更新记录
+                    sql = """
+                        UPDATE sedentary_reminder_settings
+                        SET sedentary_threshold = COALESCE(%s, sedentary_threshold),
+                            reminder_interval = COALESCE(%s, reminder_interval),
+                            reminder_voice = COALESCE(%s, reminder_voice),
+                            voice_list = COALESCE(%s, voice_list),
+                            is_enabled = COALESCE(%s, is_enabled),
+                            updated_time = CURRENT_TIMESTAMP
+                        WHERE device_id = %s
+                        RETURNING *
+                    """
+                    cur.execute(sql, (sedentary_threshold, reminder_interval, reminder_voice,
+                                     voice_list, is_enabled, device_id))
+                    conn.commit()
+                    updated_row = cur.fetchone()
+                    return {"success": True, "data": dict(updated_row) if updated_row else None}
+                else:
+                    # 创建新记录
+                    sql = """
+                        INSERT INTO sedentary_reminder_settings 
+                        (device_id, sedentary_threshold, reminder_interval, reminder_voice, voice_list, is_enabled)
+                        VALUES (%s, %s, %s, %s, %s, %s)
+                        RETURNING *
+                    """
+                    cur.execute(sql, (device_id, sedentary_threshold, reminder_interval, reminder_voice,
+                                     voice_list, is_enabled))
+                    conn.commit()
+                    new_row = cur.fetchone()
+                    return {"success": True, "data": dict(new_row) if new_row else None}
+        except Exception as e:
+            if 'conn' in locals():
+                conn.rollback()
+            return {"success": False, "message": f"操作失败: {str(e)}"}
+
+    def insert_sedentary_reminder_record(self, device_id, uuid, sedentary_duration, 
+                                          reminder_text, reminder_voice):
+        """插入提醒记录"""
+        try:
+            conn = get_postgres_connection()
+            with conn.cursor() as cur:
+                sql = """
+                    INSERT INTO sedentary_reminder_records
+                    (device_id, uuid, sedentary_duration, reminder_text, reminder_voice)
+                    VALUES (%s, %s, %s, %s, %s)
+                    RETURNING id
+                """
+                cur.execute(sql, (device_id, uuid, sedentary_duration, reminder_text, reminder_voice))
+                conn.commit()
+                record_id = cur.fetchone()[0] if cur.rowcount > 0 else None
+                return {"success": True, "record_id": record_id}
+        except Exception as e:
+            if 'conn' in locals():
+                conn.rollback()
+            return {"success": False, "message": f"插入失败: {str(e)}"}
+
+    def get_last_reminder_time(self, device_id):
+        """获取最后一次提醒时间"""
+        try:
+            conn = get_postgres_connection()
+            with conn.cursor(cursor_factory=DictCursor) as cur:
+                sql = """
+                    SELECT triggered_at FROM sedentary_reminder_records
+                    WHERE device_id = %s
+                    ORDER BY triggered_at DESC
+                    LIMIT 1
+                """
+                cur.execute(sql, (device_id,))
+                row = cur.fetchone()
+                return row['triggered_at'] if row else None
+        except Exception as e:
+            return None
+
+    def get_sedentary_history(self, device_id, number=10):
+        """获取久坐历史记录"""
+        try:
+            conn = get_postgres_connection()
+            with conn.cursor(cursor_factory=DictCursor) as cur:
+                sql = """
+                    SELECT
+                        id,
+                        device_id,
+                        uuid,
+                        state,
+                        distance_cm,
+                        start_time,
+                        last_update_time,
+                        presence_duration,
+                        absence_duration,
+                        (presence_duration + absence_duration) as total_duration,
+                        event_timestamp
+                    FROM device_time
+                    WHERE device_id = %s AND state = '有人'
+                    ORDER BY last_update_time DESC
+                    LIMIT %s
+                """
+                cur.execute(sql, (device_id, number))
+                rows = cur.fetchall()
+                return [dict(row) for row in rows] if rows else []
+        except Exception as e:
+            return []
+
+    def get_notification_settings(self, device_id):
+        """获取设备通知设置"""
+        try:
+            conn = get_postgres_connection()
+            with conn.cursor(cursor_factory=DictCursor) as cur:
+                sql = """
+                    SELECT * FROM notification_settings
+                    WHERE device_id = %s
+                    LIMIT 1
+                """
+                cur.execute(sql, (device_id,))
+                row = cur.fetchone()
+                return dict(row) if row else None
+        except Exception as e:
+            return None
+
+    def create_or_update_notification_settings(self, device_id, enable_voice=None, enable_bark=None):
+        """创建或更新通知设置"""
+        try:
+            conn = get_postgres_connection()
+            with conn.cursor(cursor_factory=DictCursor) as cur:
+                existing = self.get_notification_settings(device_id)
+                
+                if existing:
+                    # 更新记录
+                    sql = """
+                        UPDATE notification_settings
+                        SET enable_voice = COALESCE(%s, enable_voice),
+                            enable_bark = COALESCE(%s, enable_bark),
+                            updated_time = CURRENT_TIMESTAMP
+                        WHERE device_id = %s
+                        RETURNING *
+                    """
+                    cur.execute(sql, (enable_voice, enable_bark, device_id))
+                    conn.commit()
+                    updated_row = cur.fetchone()
+                    return {"success": True, "data": dict(updated_row) if updated_row else None}
+                else:
+                    # 创建新记录
+                    sql = """
+                        INSERT INTO notification_settings (device_id, enable_voice, enable_bark)
+                        VALUES (%s, %s, %s)
+                        RETURNING *
+                    """
+                    # 默认都启用
+                    voice_value = enable_voice if enable_voice is not None else True
+                    bark_value = enable_bark if enable_bark is not None else True
+                    
+                    cur.execute(sql, (device_id, voice_value, bark_value))
+                    conn.commit()
+                    new_row = cur.fetchone()
+                    return {"success": True, "data": dict(new_row) if new_row else None}
+        except Exception as e:
+            if 'conn' in locals():
+                conn.rollback()
+            return {"success": False, "message": f"操作失败: {str(e)}"}
+
+    def get_bark_settings(self, device_id):
+        """获取设备Bark通知设置"""
+        try:
+            conn = get_postgres_connection()
+            with conn.cursor(cursor_factory=DictCursor) as cur:
+                sql = """
+                    SELECT * FROM bark_notification_settings
+                    WHERE device_id = %s
+                    LIMIT 1
+                """
+                cur.execute(sql, (device_id,))
+                row = cur.fetchone()
+                return dict(row) if row else None
+        except Exception as e:
+            return None
+
+    def create_or_update_bark_settings(self, device_id, bark_sedentary_threshold=None, 
+                                      bark_reminder_interval=None, bark_voice=None):
+        """创建或更新Bark通知设置"""
+        try:
+            conn = get_postgres_connection()
+            with conn.cursor(cursor_factory=DictCursor) as cur:
+                existing = self.get_bark_settings(device_id)
+                
+                if existing:
+                    # 更新记录
+                    sql = """
+                        UPDATE bark_notification_settings
+                        SET bark_sedentary_threshold = COALESCE(%s, bark_sedentary_threshold),
+                            bark_reminder_interval = COALESCE(%s, bark_reminder_interval),
+                            bark_voice = COALESCE(%s, bark_voice),
+                            updated_time = CURRENT_TIMESTAMP
+                        WHERE device_id = %s
+                        RETURNING *
+                    """
+                    cur.execute(sql, (bark_sedentary_threshold, bark_reminder_interval, bark_voice, device_id))
+                    conn.commit()
+                    updated_row = cur.fetchone()
+                    return {"success": True, "data": dict(updated_row) if updated_row else None}
+                else:
+                    # 创建新记录
+                    sql = """
+                        INSERT INTO bark_notification_settings 
+                        (device_id, bark_sedentary_threshold, bark_reminder_interval, bark_voice)
+                        VALUES (%s, %s, %s, %s)
+                        RETURNING *
+                    """
+                    # 默认值
+                    from config import DEFAULT_BARK_SEDENTARY_THRESHOLD, DEFAULT_BARK_REMINDER_INTERVAL, DEFAULT_BARK_VOICE
+                    threshold_value = bark_sedentary_threshold if bark_sedentary_threshold is not None else DEFAULT_BARK_SEDENTARY_THRESHOLD
+                    interval_value = bark_reminder_interval if bark_reminder_interval is not None else DEFAULT_BARK_REMINDER_INTERVAL
+                    voice_value = bark_voice if bark_voice is not None else DEFAULT_BARK_VOICE
+                    
+                    cur.execute(sql, (device_id, threshold_value, interval_value, voice_value))
+                    conn.commit()
+                    new_row = cur.fetchone()
+                    return {"success": True, "data": dict(new_row) if new_row else None}
+        except Exception as e:
+            if 'conn' in locals():
+                conn.rollback()
+            return {"success": False, "message": f"操作失败: {str(e)}"}

@@ -6,6 +6,9 @@ from functions.speech_to_text import SpeechToTextFunction
 from functions.doubao import DoubaoFunction
 from functions.text_to_speech import TextToSpeechFunction
 from functions.device_time_static import DeviceTimeStaticFunction
+from functions.sedentary_reminder import SedentaryReminderFunction
+from functions.notification_settings import NotificationSettingsFunction
+from functions.bark_settings import BarkSettingsFunction
 from database.operateFunction import execuFunction
 from flask_cors import CORS
 from http import HTTPStatus
@@ -20,6 +23,9 @@ speech_to_text = SpeechToTextFunction()
 doubao_func = DoubaoFunction()
 tts_func = TextToSpeechFunction()
 device_time_static = DeviceTimeStaticFunction()
+sedentary_reminder = SedentaryReminderFunction()
+notification_settings = NotificationSettingsFunction()
+bark_settings = BarkSettingsFunction()
 
 TextToSpeechFunction.start_tts_worker()
 TextToSpeechFunction.start_mqtt_thread()
@@ -188,7 +194,22 @@ def serve_audio(filename):
 def static_time():
     try:
         data = request.get_json()
-        return device_time_static.process_device_event(data)
+        result = device_time_static.process_device_event(data)
+        
+        # 如果需要提醒，播放语音
+        response_obj, status_code = result
+        response_data = response_obj.get_json()
+        
+        if response_data and response_data.get('success'):
+            result_data = response_data.get('data', {})
+            reminder_data = result_data.get('reminder', {})
+            
+            if reminder_data and reminder_data.get('success'):
+                remind_info = reminder_data.get('data', {})
+                if remind_info.get('need_remind') and remind_info.get('reminder_text'):
+                    tts_func.text_to_speech(remind_info.get('reminder_text'))
+        
+        return result
     except Exception as e:
         return create_response(HTTPStatus.INTERNAL_SERVER_ERROR, f"服务器错误: {str(e)}", False)
 
@@ -202,6 +223,111 @@ def get_device_stats(uuid):
         return create_response(HTTPStatus.INTERNAL_SERVER_ERROR, f"服务器错误: {str(e)}", False)
 
 
+# 获取久坐提醒设置
+@app.route("/api/sedentary_settings/<device_id>", methods=["GET"], strict_slashes=False)
+def get_sedentary_settings(device_id):
+    try:
+        return sedentary_reminder.get_settings(device_id)
+    except Exception as e:
+        return create_response(HTTPStatus.INTERNAL_SERVER_ERROR, f"服务器错误: {str(e)}", False)
+
+
+# 更新久坐提醒设置
+@app.route("/api/sedentary_settings/<device_id>", methods=["POST"], strict_slashes=False)
+def update_sedentary_settings(device_id):
+    try:
+        data = request.get_json()
+        return sedentary_reminder.update_settings(device_id, data)
+    except Exception as e:
+        return create_response(HTTPStatus.INTERNAL_SERVER_ERROR, f"服务器错误: {str(e)}", False)
+
+
+
+
+# 获取久坐历史记录
+@app.route("/api/sedentary_history", methods=["POST"], strict_slashes=False)
+def get_sedentary_history():
+    try:
+        data = request.get_json()
+        device_id = data.get('device_id')
+        number = data.get('number', 10)
+        return device_time_static.get_sedentary_history(device_id, number)
+    except Exception as e:
+        return create_response(HTTPStatus.INTERNAL_SERVER_ERROR, f"服务器错误: {str(e)}", False)
+
+
+# Bark 推送接口
+@app.route("/api/bark_notification", methods=["POST"], strict_slashes=False)
+def bark_notification():
+    try:
+        from functions.bark_notice import bark_notice
+        
+        data = request.get_json()
+        notification_type = data.get('type', 'normal')  # normal, simple, with_icon
+        title = data.get('title', '')
+        body = data.get('body', '')
+        icon = data.get('icon', '')
+        
+        if notification_type == 'simple':
+            # 简单通知（只有内容）
+            if not body:
+                return create_response(HTTPStatus.BAD_REQUEST, "内容不能为空", False)
+            result = bark_notice.send_simple_notification(body)
+        elif notification_type == 'with_icon':
+            # 带图标通知
+            if not title or not body or not icon:
+                return create_response(HTTPStatus.BAD_REQUEST, "标题、内容和图标不能为空", False)
+            result = bark_notice.send_notification_with_icon(title, body, icon)
+        else:
+            # 普通通知（带标题和内容）
+            if not title or not body:
+                return create_response(HTTPStatus.BAD_REQUEST, "标题和内容不能为空", False)
+            result = bark_notice.send_notification(title, body, icon)
+        
+        if result.get('success'):
+            return create_response(HTTPStatus.OK, result.get('message', '推送成功'), True)
+        else:
+            return create_response(HTTPStatus.INTERNAL_SERVER_ERROR, result.get('message', '推送失败'), False)
+    except Exception as e:
+        return create_response(HTTPStatus.INTERNAL_SERVER_ERROR, f"服务器错误: {str(e)}", False)
+
+
+# 获取通知设置
+@app.route("/api/notification_settings/<device_id>", methods=["GET"], strict_slashes=False)
+def get_notification_settings(device_id):
+    try:
+        return notification_settings.get_settings(device_id)
+    except Exception as e:
+        return create_response(HTTPStatus.INTERNAL_SERVER_ERROR, f"服务器错误: {str(e)}", False)
+
+
+# 更新通知设置
+@app.route("/api/notification_settings/<device_id>", methods=["POST"], strict_slashes=False)
+def update_notification_settings(device_id):
+    try:
+        data = request.get_json()
+        return notification_settings.update_settings(device_id, data)
+    except Exception as e:
+        return create_response(HTTPStatus.INTERNAL_SERVER_ERROR, f"服务器错误: {str(e)}", False)
+
+
+# 获取Bark通知设置
+@app.route("/api/bark_settings/<device_id>", methods=["GET"], strict_slashes=False)
+def get_bark_settings(device_id):
+    try:
+        return bark_settings.get_settings(device_id)
+    except Exception as e:
+        return create_response(HTTPStatus.INTERNAL_SERVER_ERROR, f"服务器错误: {str(e)}", False)
+
+
+# 更新Bark通知设置
+@app.route("/api/bark_settings/<device_id>", methods=["POST"], strict_slashes=False)
+def update_bark_settings(device_id):
+    try:
+        data = request.get_json()
+        return bark_settings.update_settings(device_id, data)
+    except Exception as e:
+        return create_response(HTTPStatus.INTERNAL_SERVER_ERROR, f"服务器错误: {str(e)}", False)
 
 
 if __name__ == '__main__':

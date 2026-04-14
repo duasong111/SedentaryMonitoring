@@ -1,6 +1,7 @@
 from http import HTTPStatus
 from Common.Response import create_response
 from database.operateFunction import execuFunction
+from functions.sedentary_reminder import SedentaryReminderFunction
 import time
 import threading
 
@@ -31,6 +32,7 @@ WINDOW_MS = 25000  # 25秒滚动窗口
 MIN_PRESENCE_SECONDS = 70  # 最小有人时间（秒）
 
 db_exec = execuFunction()
+sedentary_reminder = SedentaryReminderFunction()
 
 
 class DeviceTimeStaticFunction:
@@ -92,11 +94,20 @@ class DeviceTimeStaticFunction:
             if not result.get('success'):
                 return create_response(HTTPStatus.INTERNAL_SERVER_ERROR, result.get('message', '处理失败'), False)
 
+            device_data = result.get('data', {})
+            presence_duration = device_data.get('presence_duration', 0)
+
+            # 自动检查是否需要提醒
+            remind_result = sedentary_reminder.check_and_remind(device_id, uuid, presence_duration)
+
             return create_response(
                 HTTPStatus.OK,
                 "事件处理成功",
                 True,
-                data=result.get('data')
+                data={
+                    "device": device_data,
+                    "reminder": remind_result[0].get_json() if remind_result and remind_result[0] else None
+                }
             )
 
         except Exception as e:
@@ -164,3 +175,27 @@ class DeviceTimeStaticFunction:
 
         except Exception as e:
             return create_response(HTTPStatus.INTERNAL_SERVER_ERROR, f"获取失败: {str(e)}", False)
+
+    def get_sedentary_history(self, device_id, number=10):
+        """获取久坐历史记录"""
+        try:
+            if not device_id:
+                return create_response(HTTPStatus.BAD_REQUEST, "device_id不能为空", False)
+
+            history = db_exec.get_sedentary_history(device_id, number)
+
+            # 过滤掉短时间有人记录
+            filtered_history = []
+            for record in history:
+                if record.get('presence_duration', 0) >= MIN_PRESENCE_SECONDS:
+                    filtered_history.append(record)
+
+            return create_response(
+                HTTPStatus.OK,
+                "查询成功",
+                True,
+                data=filtered_history
+            )
+
+        except Exception as e:
+            return create_response(HTTPStatus.INTERNAL_SERVER_ERROR, f"查询失败: {str(e)}", False)
