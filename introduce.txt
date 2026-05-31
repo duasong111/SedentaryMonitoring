@@ -1,0 +1,153 @@
+========================================
+        智能久坐监测系统 - 项目简介
+========================================
+
+【项目概述】
+
+  智能久坐监测系统是一套软硬件结合的健康管理方案，
+  通过毫米波雷达实时检测人体存在状态，
+  结合后端数据分析与多重提醒机制，
+  帮助用户养成良好的坐姿习惯，预防久坐带来的健康风险。
+
+  系统由三部分组成：
+  · 端 — ESP32 智能监测设备（雷达传感 + LED/震动/OLED 提醒）
+  · 云 — Flask 后端服务（数据存储 + 分析 + 控制指令下发）
+  · 端 — 手机/Web 前端（查看统计 + 远程配置设备）
+
+【核心能力】
+
+  实时检测 → 每分钟采集人体存在状态和距离数据
+  数据分析 → 小时/日/周/月多维度久坐统计
+  多重提醒 → 语音播报 + 手机推送 + 设备震动 + 灯光警示
+  远程控制 → 随时切换灯光模式、调节亮度、配置提醒参数
+
+【系统架构】
+
+  ┌──────────────┐     HTTP POST (每60秒)     ┌────────────────┐
+  │              │ ──────────────────────────→ │                │
+  │   ESP32 设备  │     MQTT 订阅 (控制指令)    │  Flask 后端服务  │
+  │  LD2402 雷达  │ ←────────────────────────── │  PostgreSQL    │
+  │  OLED + 8灯   │                             │  MQTT Broker   │
+  │  震动马达     │                             │  Bark 推送     │
+  └──────────────┘                             └────────────────┘
+                                                       │
+                                                       ▼
+                                               ┌────────────────┐
+                                               │  手机/Web 前端  │
+                                               │  统计图表展示   │
+                                               │  设备远程配置   │
+                                               └────────────────┘
+
+【后端技术栈】
+
+  语言框架：  Python / Flask
+  数据库：    PostgreSQL（原始数据存储 + 统计聚合）
+  消息队列：  MQTT（EMQX Broker，设备控制通信）
+  文字转语音：Edge-TTS（中文语音合成）
+  语音识别：  faster-whisper（Whisper STT）
+  AI 对话：   豆包大模型（火山引擎）
+  推送通知：  Bark（iOS 推送）
+  跨域支持：  Flask-CORS
+
+【数据流详解】
+
+  1. 数据采集
+     ESP32 的 LD2402 雷达每秒检测人体距离，
+     通过滑动窗口算法判断是否有人存在。
+     每 60 秒将统计数据（平均/最大/最小距离 + 状态）上报到后端。
+
+  2. 数据存储
+     后端将每分钟的上报数据存入 sedentary_minute_records 表，
+     作为原始数据保留，支持按需聚合和回溯分析。
+
+  3. 统计分析
+     查询时从分钟记录聚合出各级统计：
+     · 小时统计 — 某天 24 小时的久坐分布（前端柱状图）
+     · 日统计   — 某天的久坐总时长、活跃小时数
+     · 周统计   — 本周的累计久坐时长、活跃天数
+     · 月统计   — 本月的累计久坐时长、日均久坐
+
+  4. 提醒触发
+     每次收到"有人"上报时，计算当前连续久坐时长：
+     · 时长 >= 语音阈值 → TTS 语音播报（通过 MQTT 发送到设备播放）
+     · 时长 >= Bark 阈值 → 推送通知到手机
+     · 时长 >= 设备控制阈值 → MQTT 下发 LED/震动控制指令
+
+  5. 设备控制
+     通过 MQTT 向设备下发控制指令，支持：
+     · 6 种 LED 灯光模式（渐进/全闪/追逐/全亮/全灭/呼吸）
+     · 3 级亮度调节
+     · 震动马达控制（时长、间隔可配置）
+     所有参数通过 API 实时配置，无需重启设备。
+
+【API 接口一览】
+
+  数据上报：
+    POST /api/sedentary_report        设备每分钟上报状态数据
+
+  统计查询：
+    GET  /api/sedentary_hourly/{id}   小时统计（24小时分布）
+    GET  /api/sedentary_daily/{id}    日统计
+    GET  /api/sedentary_weekly/{id}   周统计
+    GET  /api/sedentary_monthly/{id}  月统计
+
+  提醒设置：
+    GET  /api/sedentary_settings/{id}      获取久坐提醒设置
+    POST /api/sedentary_settings/{id}      更新久坐提醒设置
+    GET  /api/notification_settings/{id}   获取通知开关
+    POST /api/notification_settings/{id}   更新通知开关
+    GET  /api/bark_settings/{id}           获取 Bark 推送设置
+    POST /api/bark_settings/{id}           更新 Bark 推送设置
+
+  设备控制：
+    GET  /api/device_control/{id}          获取设备控制设置
+    POST /api/device_control/{id}          更新设备控制设置
+    GET  /api/device_control/modes         获取可用 LED 模式列表
+    POST /api/device_control/test/{id}     测试下发控制命令
+    POST /api/device_control/direct/{id}   直接下发控制命令
+
+  语音交互：
+    POST /api/transcribe                  语音转文字
+    POST /api/tts                         文字转语音
+    POST /api/transcribe_dou              语音 → 豆包对话 → 文字
+    POST /transcribe                      语音 → 豆包对话 → 语音播报
+
+  用户管理：
+    POST /api/register/                   用户注册
+    POST /api/login/                      用户登录
+
+【数据库表结构】
+
+  sedentary_minute_records    分钟级原始数据（核心数据表）
+  device_time                 设备事件记录（旧接口数据）
+  sedentary_reminder_settings 久坐提醒配置
+  sedentary_reminder_records  提醒触发记录
+  notification_settings       通知开关配置
+  bark_notification_settings  Bark 推送配置
+  device_control_settings     设备控制配置（LED + 震动）
+  user                        用户账户
+  user_text_stastic           对话交互统计
+
+【项目特色】
+
+  1. 硬件软件一体化
+     雷达检测、数据上报、统计分析、多端提醒形成完整闭环，
+     用户从坐下的那一刻起，系统就开始默默守护。
+
+  2. 多维度数据洞察
+     不只是记录"坐了多久"，而是按小时分布展示久坐模式，
+     帮助用户发现自己的久坐规律（比如午后最容易久坐）。
+
+  3. 渐进式提醒策略
+     不是到点就"报警"，而是通过灯光渐进提示（亮灯越多 = 越该起来），
+     给用户一个缓冲和心理准备的过程。
+
+  4. 全通道覆盖
+     语音、推送、震动、灯光四条提醒通道独立配置，
+     用户可以选择安静的灯光提醒，也可以选择强烈的震动+语音。
+
+  5. 实时远程控制
+     所有设备参数通过 API 实时配置，
+     切换灯光模式、调整阈值、开关通知，即改即生效。
+
+========================================

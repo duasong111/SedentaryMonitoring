@@ -156,8 +156,75 @@ class SedentaryDailyStats:
         except Exception as e:
             return None
 
+    # ==================== 久坐时长计算 ====================
+
+    def get_current_sedentary_duration(self, device_id):
+        """
+        计算当前连续久坐时长（秒）
+        从最新的记录往前数连续的"有人"分钟
+        """
+        try:
+            conn = get_postgres_connection()
+            with conn.cursor() as cur:
+                sql = """
+                    WITH recent AS (
+                        SELECT state, created_time,
+                               ROW_NUMBER() OVER (ORDER BY created_time DESC) AS rn
+                        FROM sedentary_minute_records
+                        WHERE device_id = %s
+                          AND created_time > NOW() - INTERVAL '4 hours'
+                    ),
+                    -- 找到最近的"无人"记录的位置
+                    last_absent AS (
+                        SELECT rn FROM recent WHERE state = '无人' LIMIT 1
+                    )
+                    SELECT COUNT(*) * 60 AS duration_seconds
+                    FROM recent
+                    WHERE rn < COALESCE((SELECT rn FROM last_absent), 999999)
+                """
+                cur.execute(sql, (device_id,))
+                row = cur.fetchone()
+                return row[0] if row else 0
+        except Exception as e:
+            return 0
+
     # ==================== ESP32 上报处理 ====================
 
     def process_report(self, device_id, state, avg_distance_cm=0, max_distance_cm=0, timestamp=None):
-        """处理ESP32的每分钟上报，直接存入分钟记录表"""
-        return self.insert_minute_record(device_id, state, avg_distance_cm, max_distance_cm, timestamp)
+        """处理ESP32的每分钟上报，存入记录 + 检查是否触发提醒"""
+        # 1. 存入分钟记录
+        result = self.insert_minute_record(device_id, state, avg_distance_cm, max_distance_cm, timestamp)
+
+        # 2. 如果是"有人"，计算累计久坐时长，检查是否触发 Bark 和设备控制
+        if state == "有人":
+            duration = self.get_current_sedentary_duration(device_id)
+            if duration > 0:
+                self._check_and_trigger(device_id, duration)
+
+        return result
+
+    def _check_and_trigger(self, device_id, duration):
+        """检查久坐时长，触发 Bark 推送和设备控制"""
+        from database.operateFunction import execuFunction
+        db = execuFunction()
+
+        # --- Bark 推送 ---
+        try:
+            bark_settings = db.get_bark_settings(device_id)
+            if bark_settings and bark_settings.get('bark_sedentary_threshold'):
+                threshold = bark_settings['bark_sedentary_threshold']
+                if duration >= threshold:
+                    from functions.bark_notice import bark_notice
+                    voice = bark_settings.get('bark_voice', '您已经久坐了，请注意休息')
+                    minutes = duration // 60
+                    bark_notice.send_notification("久坐提醒", f"您已经久坐{minutes}分钟了，{voice}")
+                    print(f"Bark 推送已发送: 久坐{minutes}分钟")
+        except Exception as e:
+            print(f"Bark 推送失败: {e}")
+
+        # --- 设备控制 (LED + 震动) ---
+        try:
+            from functions.device_control import DeviceControlFunction
+            DeviceControlFunction.send_control_command(device_id, duration)
+        except Exception as e:
+            print(f"设备控制命令下发失败: {e}")
