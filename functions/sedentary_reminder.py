@@ -14,6 +14,7 @@ from config import (
     REDIS_PASSWORD,
     REDIS_DB
 )
+from functions.device_control import DeviceControlFunction
 
 db_exec = execuFunction()
 
@@ -326,6 +327,12 @@ class SedentaryReminderFunction:
                         print(f"Bark 推送失败: {bark_result.get('message')}")
                 except Exception as e:
                     print(f"Bark 推送失败: {e}")
+
+            # 设备控制：LED + 震动
+            try:
+                DeviceControlFunction.send_control_command(device_id, presence_duration)
+            except Exception as e:
+                print(f"设备控制命令下发失败: {e}")
 
             return create_response(
                 HTTPStatus.OK,

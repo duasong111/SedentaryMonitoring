@@ -447,3 +447,74 @@ class execuFunction():
             if 'conn' in locals():
                 conn.rollback()
             return {"success": False, "message": f"操作失败: {str(e)}"}
+
+    def get_device_control_settings(self, device_id):
+        """获取设备控制设置"""
+        try:
+            conn = get_postgres_connection()
+            with conn.cursor(cursor_factory=DictCursor) as cur:
+                sql = """
+                    SELECT * FROM device_control_settings
+                    WHERE device_id = %s
+                    LIMIT 1
+                """
+                cur.execute(sql, (device_id,))
+                row = cur.fetchone()
+                return dict(row) if row else None
+        except Exception as e:
+            return None
+
+    def create_or_update_device_control_settings(self, device_id, is_enabled=None,
+                                                  vibration_enabled=None, vibration_duration=None,
+                                                  vibration_interval=None, led_mode=None,
+                                                  led_interval=None, led_intensity=None,
+                                                  led_brightness=None, sedentary_threshold=None):
+        """创建或更新设备控制设置"""
+        try:
+            conn = get_postgres_connection()
+            with conn.cursor(cursor_factory=DictCursor) as cur:
+                existing = self.get_device_control_settings(device_id)
+
+                if existing:
+                    sql = """
+                        UPDATE device_control_settings
+                        SET is_enabled = COALESCE(%s, is_enabled),
+                            vibration_enabled = COALESCE(%s, vibration_enabled),
+                            vibration_duration = COALESCE(%s, vibration_duration),
+                            vibration_interval = COALESCE(%s, vibration_interval),
+                            led_mode = COALESCE(%s, led_mode),
+                            led_interval = COALESCE(%s, led_interval),
+                            led_intensity = COALESCE(%s, led_intensity),
+                            led_brightness = COALESCE(%s, led_brightness),
+                            sedentary_threshold = COALESCE(%s, sedentary_threshold),
+                            updated_time = CURRENT_TIMESTAMP
+                        WHERE device_id = %s
+                        RETURNING *
+                    """
+                    cur.execute(sql, (is_enabled, vibration_enabled, vibration_duration,
+                                      vibration_interval, led_mode, led_interval,
+                                      led_intensity, led_brightness, sedentary_threshold, device_id))
+                    conn.commit()
+                    updated_row = cur.fetchone()
+                    return {"success": True, "data": dict(updated_row) if updated_row else None}
+                else:
+                    sql = """
+                        INSERT INTO device_control_settings
+                        (device_id, is_enabled, vibration_enabled, vibration_duration,
+                         vibration_interval, led_mode, led_interval, led_intensity,
+                         led_brightness, sedentary_threshold)
+                        VALUES (%s, COALESCE(%s, TRUE), COALESCE(%s, TRUE), COALESCE(%s, 500),
+                                COALESCE(%s, 300), COALESCE(%s, 'progressive'), COALESCE(%s, 1000),
+                                COALESCE(%s, 8), COALESCE(%s, 2), COALESCE(%s, 1800))
+                        RETURNING *
+                    """
+                    cur.execute(sql, (device_id, is_enabled, vibration_enabled, vibration_duration,
+                                      vibration_interval, led_mode, led_interval,
+                                      led_intensity, led_brightness, sedentary_threshold))
+                    conn.commit()
+                    new_row = cur.fetchone()
+                    return {"success": True, "data": dict(new_row) if new_row else None}
+        except Exception as e:
+            if 'conn' in locals():
+                conn.rollback()
+            return {"success": False, "message": f"操作失败: {str(e)}"}

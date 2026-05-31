@@ -9,6 +9,8 @@ from functions.device_time_static import DeviceTimeStaticFunction
 from functions.sedentary_reminder import SedentaryReminderFunction
 from functions.notification_settings import NotificationSettingsFunction
 from functions.bark_settings import BarkSettingsFunction
+from functions.sedentary_daily_stats import SedentaryDailyStats
+from functions.device_control import DeviceControlFunction
 from database.operateFunction import execuFunction
 from flask_cors import CORS
 from http import HTTPStatus
@@ -26,6 +28,8 @@ device_time_static = DeviceTimeStaticFunction()
 sedentary_reminder = SedentaryReminderFunction()
 notification_settings = NotificationSettingsFunction()
 bark_settings = BarkSettingsFunction()
+sedentary_daily_stats = SedentaryDailyStats()
+device_control = DeviceControlFunction()
 
 TextToSpeechFunction.start_tts_worker()
 TextToSpeechFunction.start_mqtt_thread()
@@ -113,7 +117,7 @@ def transcribe_tts():
     except Exception as e:
         return create_response(HTTPStatus.INTERNAL_SERVER_ERROR, f"服务器错误: {str(e)}", False)
 
-
+# 接入豆包
 @app.route("/transcribe", methods=["POST"], strict_slashes=False)
 def transcribe_dou_tts():
     try:
@@ -329,6 +333,151 @@ def update_bark_settings(device_id):
     except Exception as e:
         return create_response(HTTPStatus.INTERNAL_SERVER_ERROR, f"服务器错误: {str(e)}", False)
 
+
+# ==================== 久坐每日统计 ====================
+
+# ESP32 周期性上报久坐数据（每分钟）
+@app.route("/api/sedentary_report", methods=["POST"], strict_slashes=False)
+def sedentary_report():
+    try:
+        data = request.get_json()
+        device_id = data.get('device_id')
+        state = data.get('state', '无人')
+        avg_distance_cm = data.get('avg_distance_cm', 0)
+        max_distance_cm = data.get('max_distance_cm', 0)
+        timestamp = data.get('timestamp')
+
+        if not device_id:
+            return create_response(HTTPStatus.BAD_REQUEST, "device_id 不能为空", False)
+        if state not in ('有人', '无人'):
+            return create_response(HTTPStatus.BAD_REQUEST, "state 必须为 '有人' 或 '无人'", False)
+
+        result = sedentary_daily_stats.process_report(
+            device_id=device_id,
+            state=state,
+            avg_distance_cm=avg_distance_cm,
+            max_distance_cm=max_distance_cm,
+            timestamp=timestamp
+        )
+        return create_response(HTTPStatus.OK, "上报成功", True, result)
+    except Exception as e:
+        return create_response(HTTPStatus.INTERNAL_SERVER_ERROR, f"服务器错误: {str(e)}", False)
+
+
+# 查询日统计
+@app.route("/api/sedentary_daily/<device_id>", methods=["GET"], strict_slashes=False)
+def get_sedentary_daily(device_id):
+    try:
+        date_str = request.args.get('date')  # 格式: 2026-05-30
+        if not date_str:
+            from datetime import date
+            date_str = str(date.today())
+
+        data = sedentary_daily_stats.get_daily_stats(device_id, date_str)
+        return create_response(HTTPStatus.OK, "查询成功", True, data)
+    except Exception as e:
+        return create_response(HTTPStatus.INTERNAL_SERVER_ERROR, f"服务器错误: {str(e)}", False)
+
+
+# 查询小时统计（某天24小时分布，前端画柱状图）
+@app.route("/api/sedentary_hourly/<device_id>", methods=["GET"], strict_slashes=False)
+def get_sedentary_hourly(device_id):
+    try:
+        date_str = request.args.get('date')  # 格式: 2026-05-30
+        if not date_str:
+            from datetime import date
+            date_str = str(date.today())
+
+        data = sedentary_daily_stats.get_hourly_stats(device_id, date_str)
+        return create_response(HTTPStatus.OK, "查询成功", True, data)
+    except Exception as e:
+        return create_response(HTTPStatus.INTERNAL_SERVER_ERROR, f"服务器错误: {str(e)}", False)
+
+
+# 查询周统计
+@app.route("/api/sedentary_weekly/<device_id>", methods=["GET"], strict_slashes=False)
+def get_sedentary_weekly(device_id):
+    try:
+        data = sedentary_daily_stats.get_weekly_stats(device_id)
+        return create_response(HTTPStatus.OK, "查询成功", True, data)
+    except Exception as e:
+        return create_response(HTTPStatus.INTERNAL_SERVER_ERROR, f"服务器错误: {str(e)}", False)
+
+
+# 查询月统计
+@app.route("/api/sedentary_monthly/<device_id>", methods=["GET"], strict_slashes=False)
+def get_sedentary_monthly(device_id):
+    try:
+        data = sedentary_daily_stats.get_monthly_stats(device_id)
+        return create_response(HTTPStatus.OK, "查询成功", True, data)
+    except Exception as e:
+        return create_response(HTTPStatus.INTERNAL_SERVER_ERROR, f"服务器错误: {str(e)}", False)
+
+
+# ==================== 设备控制 ====================
+
+# 获取可用LED模式列表
+@app.route("/api/device_control/modes", methods=["GET"], strict_slashes=False)
+def get_device_control_modes():
+    try:
+        return device_control.get_available_modes()
+    except Exception as e:
+        return create_response(HTTPStatus.INTERNAL_SERVER_ERROR, f"服务器错误: {str(e)}", False)
+
+
+# 获取设备控制设置
+@app.route("/api/device_control/<device_id>", methods=["GET"], strict_slashes=False)
+def get_device_control_settings(device_id):
+    try:
+        return device_control.get_settings(device_id)
+    except Exception as e:
+        return create_response(HTTPStatus.INTERNAL_SERVER_ERROR, f"服务器错误: {str(e)}", False)
+
+
+# 更新设备控制设置
+@app.route("/api/device_control/<device_id>", methods=["POST"], strict_slashes=False)
+def update_device_control_settings(device_id):
+    try:
+        data = request.get_json()
+        return device_control.update_settings(device_id, data)
+    except Exception as e:
+        return create_response(HTTPStatus.INTERNAL_SERVER_ERROR, f"服务器错误: {str(e)}", False)
+
+
+# 测试发送控制命令（手动触发一次MQTT下发）
+@app.route("/api/device_control/test/<device_id>", methods=["POST"], strict_slashes=False)
+def test_device_control(device_id):
+    try:
+        data = request.get_json() or {}
+        presence_duration = data.get('presence_duration', 1800)
+        result = DeviceControlFunction.send_control_command(device_id, presence_duration)
+        return create_response(HTTPStatus.OK, "测试命令已发送", True, result)
+    except Exception as e:
+        return create_response(HTTPStatus.INTERNAL_SERVER_ERROR, f"服务器错误: {str(e)}", False)
+
+
+@app.route("/api/device_control/direct/<device_id>", methods=["POST"])
+def direct_device_control(device_id):
+    try:
+        data = request.get_json() or {}
+        result = DeviceControlFunction.send_direct_control(
+            device_id=device_id,
+            led_mode=data.get('led_mode'),
+            brightness=data.get('brightness', 2),
+            interval_ms=data.get('interval_ms', 1000),
+            byte_value=data.get('byte_value', 0),
+            vibration_enabled=data.get('vibration_enabled', True),
+            vibration_duration=data.get('vibration_duration', 500),
+            vibration_interval=data.get('vibration_interval', 300)
+        )
+        
+        if result["success"]:
+            return create_response(HTTPStatus.OK, result["message"], True, result)
+        else:
+            return create_response(HTTPStatus.INTERNAL_SERVER_ERROR, result["message"], False)
+            
+    except Exception as e:
+        return create_response(HTTPStatus.INTERNAL_SERVER_ERROR, str(e), False)
 
 if __name__ == '__main__':
     TextToSpeechFunction.start_tts_worker()

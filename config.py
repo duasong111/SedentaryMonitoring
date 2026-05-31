@@ -5,14 +5,14 @@ DATABASES = {
         'NAME': 'SedentaryMonitoring',
         'USER': 'postgres',
         'PASSWORD': 'gsm200818534',
-        'HOST': '192.168.18.204',
+        'HOST': '192.168.18.244',
         'PORT': '5432',
     }
 }
 
 
 # 树莓派测试环境
-REDIS_HOST = "192.168.18.204"
+REDIS_HOST = "192.168.18.244"
 REDIS_PORT = 6379
 REDIS_PASSWORD = "gsm200818534"
 REDIS_DB = 5
@@ -24,8 +24,8 @@ MQTT_BROKER = "60.205.140.163"
 MQTT_PORT = 1883
 MQTT_USER = "admin"
 MQTT_PASS = "password"
-SUB_TOPIC = "control/esp32"
-PUB_TOPIC = "devices/esp32_001/control"
+SUB_TOPIC = "devices/esp32_001/control"
+PUB_TOPIC = "control/esp32"
 
 # 豆包配置
 DOUBAO_API_KEY = "ecc1665a-1a3c-4a3f-a92a-3bce10398509"
@@ -34,7 +34,7 @@ DOUBAO_URL = "https://ark.cn-beijing.volces.com/api/v3/chat/completions"
 DOUBAO_SYSTEM = "你是一个可以聊天的朋友，回答问题比较简洁。不要使用表情"
 
 # TTS配置
-LOCAL_IP = "192.168.18.210"
+LOCAL_IP = "192.168.18.114"
 LOCAL_PORT = 5001
 TTS_VOICE = "zh-CN-XiaoyiNeural"
 
