@@ -1,3 +1,4 @@
+import os
 import numpy as np
 import time
 import warnings
@@ -10,6 +11,15 @@ from database.operateFunction import execuFunction
 db_exec = execuFunction()
 
 warnings.filterwarnings("ignore", category=RuntimeWarning)
+
+# 使用 small 模型（244MB，下载快）
+MODEL_SIZE = "small"
+
+# 从环境变量读取 HuggingFace Token（可选，不设也能用，只是慢）
+# 设置方法：export HF_TOKEN="hf_xxxxxxxxxxxxxxxxxxxx"
+HF_TOKEN = os.environ.get("HF_TOKEN", "")
+if HF_TOKEN:
+    os.environ["HUGGINGFACE_HUB_TOKEN"] = HF_TOKEN
 
 MODEL_SIZE = "small"
 DEVICE = "cpu"
@@ -76,8 +86,10 @@ class SpeechToTextFunction:
         segments, _ = model.transcribe(
             audio_np,
             language="zh",
-            beam_size=5,
-            vad_filter=True,
+            initial_prompt="以下是普通话的日常对话。",
+            beam_size=10,
+            vad_filter=False,
+            temperature=0.0,
             word_timestamps=False
         )
         text = " ".join(s.text for s in segments).strip()
@@ -109,6 +121,9 @@ class SpeechToTextFunction:
             )
 
         except Exception as e:
+            import traceback
+            print(f"[ERROR] 语音转文字失败: {e}")
+            traceback.print_exc()
             return create_response(HTTPStatus.INTERNAL_SERVER_ERROR, f"语音转文字失败: {str(e)}", False)
 
     # def wake_detect(self, audio_bytes, wake_words=None, session_key=None):

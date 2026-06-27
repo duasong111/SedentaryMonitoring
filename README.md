@@ -157,7 +157,7 @@ pip install flask flask-cors flask-socketio psycopg2-binary faster-whisper numpy
 # 数据库
 DATABASES = {
     'default': {
-        'NAME': 'SedentaryMonitoring',
+        'NAME': 'postgres',
         'USER': 'postgres',
         'PASSWORD': '密码',
         'HOST': '主机地址',

@@ -2,7 +2,7 @@
 DATABASES = {
     'default': {
         'ENGINE': 'django.db.backends.postgresql',
-        'NAME': 'SedentaryMonitoring',
+        'NAME': 'postgres',
         'USER': 'postgres',
         'PASSWORD': 'gsm200818534',
         'HOST': '192.168.18.244',
@@ -20,16 +20,16 @@ REDIS_DB = 5
 REDIS_URL = f"redis://:{REDIS_PASSWORD}@{REDIS_HOST}:{REDIS_PORT}/{REDIS_DB}"
 
 # MQTT配置
-MQTT_BROKER = ""
+MQTT_BROKER = "60.205.140.163"
 MQTT_PORT = 1883
-MQTT_USER = ""
-MQTT_PASS = ""
-SUB_TOPIC = ""
-PUB_TOPIC = ""
+MQTT_USER = "admin"
+MQTT_PASS = "password"
+SUB_TOPIC = "devices/esp32_001/control"
+PUB_TOPIC = "control/esp32"
 
 # 豆包配置
-DOUBAO_API_KEY = ""
-DOUBAO_MODEL = ""
+DOUBAO_API_KEY = "ecc1665a-1a3c-4a3f-a92a-3bce10398509"
+DOUBAO_MODEL = "doubao-seed-2-0-lite-260215"
 DOUBAO_URL = "https://ark.cn-beijing.volces.com/api/v3/chat/completions"
 DOUBAO_SYSTEM = "你是一个可以聊天的朋友，回答问题比较简洁。不要使用表情"
 
@@ -57,4 +57,3 @@ BARK_DEVICE_KEY = "NHoXrpKTK482FwxHkN8WmG"  # 替换为你的Bark设备密钥
 DEFAULT_BARK_SEDENTARY_THRESHOLD = 3600  # 60分钟
 DEFAULT_BARK_REMINDER_INTERVAL = 600  # 10分钟
 DEFAULT_BARK_VOICE = "您已经久坐了，请注意休息"
-
