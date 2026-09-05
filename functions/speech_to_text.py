@@ -42,6 +42,22 @@ class SpeechToTextFunction:
             cls._model = WhisperModel(MODEL_SIZE, device=DEVICE, compute_type=COMPUTE_TYPE)
         return cls._model
 
+    # Whisper 常见幻觉短语（静音/纯噪声输入时模型会"脑补"出这些高频句子）
+    _HALLUCINATION_PATTERNS = (
+        "请不吝点赞", "订阅", "转发", "打赏", "明镜", "点点栏目",
+        "谢谢大家", "thank you for watching", "subscribe",
+        "请关注", "请订阅", "如果您喜欢", "if you like",
+        "字幕", "字幕组",
+    )
+
+    @staticmethod
+    def _is_hallucination(text: str) -> bool:
+        """检测 Whisper 常见幻觉短语（仅在 text 非空时调用）"""
+        if not text:
+            return False
+        t = text.lower()
+        return any(p.lower() in t for p in SpeechToTextFunction._HALLUCINATION_PATTERNS)
+
     # @classmethod
     # def _is_session_active(cls, session_key):
     #     """检查会话是否活跃"""
@@ -86,14 +102,26 @@ class SpeechToTextFunction:
         segments, _ = model.transcribe(
             audio_np,
             language="zh",
-            initial_prompt="以下是普通话的日常对话。",
+            # —— 锚定到智能设备命令场景，抑制"感谢观看"类幻觉 ——
+            initial_prompt="用户正在对一个智能设备说话，可能包含指令、问题或问候。",
             beam_size=10,
             vad_filter=False,
-            temperature=0.0,
-            word_timestamps=False
+            # —— 抑制幻觉的轻量参数（不引入 VAD，避免误判合法语音）——
+            condition_on_previous_text=False,  # 段间不互相诱发
+            repetition_penalty=1.05,           # 轻度抑制重复（避免卡字）
+            compression_ratio_threshold=2.4,   # 跳过异常压缩的段（典型幻觉特征）
+            log_prob_threshold=-1.0,           # 跳过低置信度段
+            temperature=0.0,                   # 保持 greedy
+            word_timestamps=False,
         )
         text = " ".join(s.text for s in segments).strip()
         latency = round((time.time() - start) * 1000, 2)
+
+        # 幻觉黑名单过滤（仅过滤模型"脑补"的高频短句，空文本直接放行交给上层判断）
+        if text and self._is_hallucination(text):
+            print(f"语音转文字 [{latency}ms]: [已过滤幻觉] {text!r}")
+            return None, latency
+
         print(f"语音转文字 [{latency}ms]: {text}")
         return text, latency
 

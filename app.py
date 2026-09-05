@@ -1,16 +1,20 @@
+import os
+import uuid
+import subprocess
 from flask_socketio import emit
 from Common.Response import create_response
 from flask import Flask, request
 from functions.user import LoginFunction, RegisterFunction
 from functions.speech_to_text import SpeechToTextFunction
 from functions.doubao import DoubaoFunction
-from functions.text_to_speech import TextToSpeechFunction
+from functions.text_to_speech import TextToSpeechFunction, AUDIO_DIR, MAX_AUDIO_FILES
 from functions.device_time_static import DeviceTimeStaticFunction
 from functions.sedentary_reminder import SedentaryReminderFunction
 from functions.notification_settings import NotificationSettingsFunction
 from functions.bark_settings import BarkSettingsFunction
 from functions.sedentary_daily_stats import SedentaryDailyStats
 from functions.device_control import DeviceControlFunction
+from functions.voice_clone import VoiceCloneFunction
 from database.operateFunction import execuFunction
 from flask_cors import CORS
 from http import HTTPStatus
@@ -24,6 +28,7 @@ db_function = execuFunction()
 speech_to_text = SpeechToTextFunction()
 doubao_func = DoubaoFunction()
 tts_func = TextToSpeechFunction()
+voice_clone = VoiceCloneFunction()
 device_time_static = DeviceTimeStaticFunction()
 sedentary_reminder = SedentaryReminderFunction()
 notification_settings = NotificationSettingsFunction()
@@ -113,9 +118,109 @@ def transcribe_tts():
         if not text:
             return create_response(HTTPStatus.BAD_REQUEST, "未识别到内容", False)
 
+        device_id = request.args.get('device_id', '').strip() or None
+        if device_id:
+            synth_result = voice_clone.synthesize_now(device_id, text)
+            status_code = HTTPStatus.OK if synth_result["success"] else HTTPStatus.INTERNAL_SERVER_ERROR
+            return create_response(status_code, synth_result["message"], synth_result["success"], synth_result["data"])
         return tts_func.text_to_speech(text)
     except Exception as e:
         return create_response(HTTPStatus.INTERNAL_SERVER_ERROR, f"服务器错误: {str(e)}", False)
+
+# ========== 接收 ESP32 上传的录音（保存为 MP3，顺便识别文字）==========
+@app.route("/api/upload_audio", methods=["POST"], strict_slashes=False)
+def upload_audio():
+    try:
+        audio_bytes = request.get_data()
+        if not audio_bytes:
+            return create_response(HTTPStatus.BAD_REQUEST, "无音频数据", False)
+
+        # 可选 query: ?device_id=xxx&transcribe=1
+        device_id       = request.args.get('device_id', '').strip() or None
+        want_transcribe = request.args.get('transcribe', '1').lower() in ('1', 'true', 'yes')
+
+        file_id  = str(uuid.uuid4())
+        pcm_path = os.path.join(AUDIO_DIR, f"{file_id}_raw.pcm")
+        mp3_path = os.path.join(AUDIO_DIR, f"{file_id}.mp3")
+
+        # 1) 落盘原始 PCM（int16 LE 16kHz mono，ESP32 Flash 里 raw data 原样）
+        with open(pcm_path, "wb") as f:
+            f.write(audio_bytes)
+
+        # 2) ffmpeg 转 MP3（22050Hz mono 48kbps，跟现有 TTS 一致风格）
+        try:
+            subprocess.run(
+                [
+                    "ffmpeg", "-y",
+                    "-f", "s16le", "-ar", "16000", "-ac", "1",
+                    "-i", pcm_path,
+                    "-ar", "22050", "-ac", "1", "-b:a", "48k",
+                    "-map_metadata", "-1",
+                    "-codec:a", "libmp3lame",
+                    mp3_path,
+                ],
+                check=True, capture_output=True, timeout=30,
+            )
+        except subprocess.CalledProcessError as e:
+            err = e.stderr.decode(errors="ignore") if e.stderr else ""
+            if os.path.exists(pcm_path):
+                os.remove(pcm_path)
+            return create_response(
+                HTTPStatus.INTERNAL_SERVER_ERROR,
+                f"MP3转码失败: {err[-200:]}", False,
+            )
+
+        # 删中间 pcm
+        if os.path.exists(pcm_path):
+            os.remove(pcm_path)
+
+        if not os.path.exists(mp3_path):
+            return create_response(
+                HTTPStatus.INTERNAL_SERVER_ERROR, "MP3文件未生成", False,
+            )
+
+        size_mp3     = os.path.getsize(mp3_path)
+        duration_sec = round(len(audio_bytes) / 2.0 / 16000.0, 2)
+
+        # 3) 可选：顺便转文字（保留 ESP32 端识别体验）
+        text    = None
+        latency = 0
+        if want_transcribe:
+            text, latency = speech_to_text._transcribe_text(audio_bytes)
+            if text:
+                db_function.insert_text_stastic(text, 'upload_audio_transcribe', latency)
+
+        # 4) 清理旧 mp3（保留最新 MAX_AUDIO_FILES 个）
+        try:
+            files = []
+            for f in os.listdir(AUDIO_DIR):
+                if f.endswith('.mp3'):
+                    fp = os.path.join(AUDIO_DIR, f)
+                    files.append((fp, os.path.getmtime(fp)))
+            files.sort(key=lambda x: x[1], reverse=True)
+            for fp, _ in files[MAX_AUDIO_FILES:]:
+                try:
+                    os.remove(fp)
+                except Exception:
+                    pass
+        except Exception as e:
+            print("[upload_audio] cleanup error:", e)
+
+        return create_response(HTTPStatus.OK, "上传成功", True, data={
+            "filename":     f"{file_id}.mp3",
+            "size_bytes":   size_mp3,
+            "duration_sec": duration_sec,
+            "text":         text,
+            "device_id":    device_id,
+        })
+
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return create_response(
+            HTTPStatus.INTERNAL_SERVER_ERROR, f"上传失败: {str(e)}", False,
+        )
+
 
 # 接入豆包
 @app.route("/transcribe", methods=["POST"], strict_slashes=False)
@@ -133,6 +238,11 @@ def transcribe_dou_tts():
         if not answer:
             return create_response(HTTPStatus.INTERNAL_SERVER_ERROR, "豆包处理失败", False)
 
+        device_id = request.args.get('device_id', '').strip() or None
+        if device_id:
+            synth_result = voice_clone.synthesize_now(device_id, answer)
+            status_code = HTTPStatus.OK if synth_result["success"] else HTTPStatus.INTERNAL_SERVER_ERROR
+            return create_response(status_code, synth_result["message"], synth_result["success"], synth_result["data"])
         return tts_func.text_to_speech(answer)
     except Exception as e:
         return create_response(HTTPStatus.INTERNAL_SERVER_ERROR, f"服务器错误: {str(e)}", False)
@@ -160,6 +270,13 @@ def text_to_speech():
     try:
         data = request.get_json()
         text = data.get('text', '')
+        device_id = data.get('device_id', '').strip() or None
+        if device_id:
+            # 走克隆音色（内部已含降级逻辑）
+            result = voice_clone.synthesize_now(device_id, text)
+            status_code = HTTPStatus.OK if result["success"] else HTTPStatus.INTERNAL_SERVER_ERROR
+            return create_response(status_code, result["message"], result["success"], result["data"])
+        # 无 device_id → 维持原 edge-tts 行为
         return tts_func.text_to_speech(text)
     except Exception as e:
         return create_response(HTTPStatus.INTERNAL_SERVER_ERROR, f"服务器错误: {str(e)}", False)
@@ -170,6 +287,7 @@ def text_to_speech_dou():
     try:
         data = request.get_json()
         text = data.get('text', '')
+        device_id = data.get('device_id', '').strip() or None
         if not text or not text.strip():
             return create_response(HTTPStatus.BAD_REQUEST, "文本内容不能为空", False)
 
@@ -180,6 +298,10 @@ def text_to_speech_dou():
         if not result:
             return create_response(HTTPStatus.INTERNAL_SERVER_ERROR, "豆包处理失败", False)
 
+        if device_id:
+            synth_result = voice_clone.synthesize_now(device_id, result)
+            status_code = HTTPStatus.OK if synth_result["success"] else HTTPStatus.INTERNAL_SERVER_ERROR
+            return create_response(status_code, synth_result["message"], synth_result["success"], synth_result["data"])
         return tts_func.text_to_speech(result)
     except Exception as e:
         return create_response(HTTPStatus.INTERNAL_SERVER_ERROR, f"服务器错误: {str(e)}", False)
@@ -199,20 +321,25 @@ def static_time():
     try:
         data = request.get_json()
         result = device_time_static.process_device_event(data)
-        
+
         # 如果需要提醒，播放语音
         response_obj, status_code = result
         response_data = response_obj.get_json()
-        
+
         if response_data and response_data.get('success'):
             result_data = response_data.get('data', {})
             reminder_data = result_data.get('reminder', {})
-            
+
             if reminder_data and reminder_data.get('success'):
                 remind_info = reminder_data.get('data', {})
                 if remind_info.get('need_remind') and remind_info.get('reminder_text'):
-                    tts_func.text_to_speech(remind_info.get('reminder_text'))
-        
+                    device_id = (data or {}).get('device_id') or remind_info.get('device_id')
+                    reminder_text = remind_info.get('reminder_text')
+                    if device_id:
+                        voice_clone.synthesize_now(device_id, reminder_text)
+                    else:
+                        tts_func.text_to_speech(reminder_text)
+
         return result
     except Exception as e:
         return create_response(HTTPStatus.INTERNAL_SERVER_ERROR, f"服务器错误: {str(e)}", False)
@@ -475,9 +602,58 @@ def direct_device_control(device_id):
             return create_response(HTTPStatus.OK, result["message"], True, result)
         else:
             return create_response(HTTPStatus.INTERNAL_SERVER_ERROR, result["message"], False)
-            
+
     except Exception as e:
         return create_response(HTTPStatus.INTERNAL_SERVER_ERROR, str(e), False)
+
+
+# ==================== 音色克隆 ====================
+
+# 查询音色档案
+@app.route("/api/voice_clone/<device_id>", methods=["GET"], strict_slashes=False)
+def get_voice_clone(device_id):
+    try:
+        return voice_clone.get_profile(device_id)
+    except Exception as e:
+        return create_response(HTTPStatus.INTERNAL_SERVER_ERROR, f"服务器错误: {str(e)}", False)
+
+
+# 注册音色（multipart 上传）
+@app.route("/api/voice_clone/register", methods=["POST"], strict_slashes=False)
+def register_voice_clone():
+    try:
+        device_id = request.form.get('device_id', '').strip()
+        sample_text = request.form.get('sample_text', '').strip()
+        if 'audio' not in request.files:
+            return create_response(HTTPStatus.BAD_REQUEST, "缺少 audio 文件", False)
+        audio_file = request.files['audio']
+        return voice_clone.register_voice(device_id, audio_file.read(), audio_file.mimetype, sample_text)
+    except Exception as e:
+        return create_response(HTTPStatus.INTERNAL_SERVER_ERROR, f"服务器错误: {str(e)}", False)
+
+
+# 同步合成（带 device_id 走克隆，未注册则降级）
+@app.route("/api/voice_clone/synthesize", methods=["POST"], strict_slashes=False)
+def synthesize_voice_clone():
+    try:
+        data = request.get_json() or {}
+        device_id = data.get('device_id', '').strip() or None
+        text = data.get('text', '')
+        result = voice_clone.synthesize_now(device_id, text)
+        status_code = HTTPStatus.OK if result["success"] else HTTPStatus.INTERNAL_SERVER_ERROR
+        return create_response(status_code, result["message"], result["success"], result["data"])
+    except Exception as e:
+        return create_response(HTTPStatus.INTERNAL_SERVER_ERROR, f"服务器错误: {str(e)}", False)
+
+
+# 软删除（停用）
+@app.route("/api/voice_clone/<device_id>", methods=["DELETE"], strict_slashes=False)
+def delete_voice_clone(device_id):
+    try:
+        return voice_clone.delete_voice(device_id)
+    except Exception as e:
+        return create_response(HTTPStatus.INTERNAL_SERVER_ERROR, f"服务器错误: {str(e)}", False)
+
 
 if __name__ == '__main__':
     TextToSpeechFunction.start_tts_worker()

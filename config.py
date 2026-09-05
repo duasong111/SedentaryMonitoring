@@ -5,14 +5,14 @@ DATABASES = {
         'NAME': 'postgres',
         'USER': 'postgres',
         'PASSWORD': 'gsm200818534',
-        'HOST': '192.168.18.244',
+        'HOST': '192.168.18.245',
         'PORT': '5432',
     }
 }
 
 
 # 树莓派测试环境
-REDIS_HOST = "192.168.18.244"
+REDIS_HOST = "192.168.18.245"
 REDIS_PORT = 6379
 REDIS_PASSWORD = "gsm200818534"
 REDIS_DB = 5
@@ -37,6 +37,21 @@ DOUBAO_SYSTEM = "你是一个可以聊天的朋友，回答问题比较简洁。
 LOCAL_IP = "192.168.18.114"
 LOCAL_PORT = 5001
 TTS_VOICE = "zh-CN-XiaoyiNeural"
+
+# 火山引擎声音复刻配置（mega_tts）
+VOLCENGINE_APPID = "你的APPID"
+VOLCENGINE_TOKEN = "你的Access Token"
+VOLCENGINE_CLUSTER = "volcano_mega_tts"
+VOLCENGINE_CLONE_RESOURCE_ID = "seed-icl-2.0"
+VOLC_TTS_UPLOAD_URL = "https://openspeech.bytedance.com/api/v1/mega_tts/audio/upload"
+VOLC_TTS_TTS_URL = "https://openspeech.bytedance.com/api/v1/mega_tts/audio/tts"
+
+# 音色克隆存储
+VOICE_CLONE_REF_DIR = "ref"  # audio/ref/{device_id}/{ts}.wav
+VOICE_CLONE_AUDIO_PREFIX = "clone_"  # audio/clone_{uuid}.mp3
+VOICE_CLONE_MIN_DURATION_MS = 10000  # 10s 下限
+VOICE_CLONE_MAX_DURATION_MS = 30000  # 30s 上限
+VOICE_CLONE_TIMEOUT = 30  # 秒
 
 # 久坐提醒配置
 DEFAULT_SEDENTARY_THRESHOLD = 1800

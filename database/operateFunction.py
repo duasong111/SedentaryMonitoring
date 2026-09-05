@@ -518,3 +518,105 @@ class execuFunction():
             if 'conn' in locals():
                 conn.rollback()
             return {"success": False, "message": f"操作失败: {str(e)}"}
+
+    # ==================== 音色克隆 ====================
+
+    def get_voice_clone_profile(self, device_id):
+        """获取某设备的音色档案；返回 dict 或 None"""
+        if not device_id:
+            return None
+        try:
+            conn = get_postgres_connection()
+            with conn.cursor(cursor_factory=DictCursor) as cur:
+                cur.execute(
+                    "SELECT * FROM voice_clone_profiles WHERE device_id = %s LIMIT 1",
+                    (device_id,)
+                )
+                row = cur.fetchone()
+                return dict(row) if row else None
+        except Exception as e:
+            print(f"查询音色档案失败: {e}")
+            return None
+
+    def create_or_update_voice_clone_profile(self, device_id, provider='volcengine_mega_tts',
+                                             voice_id=None, voice_type=None, reference_audio_path=None,
+                                             reference_sample_text=None, reference_duration_ms=None,
+                                             status='training', error_message=None):
+        """upsert 音色档案"""
+        try:
+            conn = get_postgres_connection()
+            with conn.cursor(cursor_factory=DictCursor) as cur:
+                existing = self.get_voice_clone_profile(device_id)
+
+                if existing:
+                    cur.execute("""
+                        UPDATE voice_clone_profiles SET
+                            provider = COALESCE(%s, provider),
+                            voice_id = COALESCE(%s, voice_id),
+                            voice_type = COALESCE(%s, voice_type),
+                            reference_audio_path = COALESCE(%s, reference_audio_path),
+                            reference_sample_text = COALESCE(%s, reference_sample_text),
+                            reference_duration_ms = COALESCE(%s, reference_duration_ms),
+                            status = COALESCE(%s, status),
+                            error_message = COALESCE(%s, error_message),
+                            updated_time = CURRENT_TIMESTAMP
+                        WHERE device_id = %s
+                        RETURNING *
+                    """, (provider, voice_id, voice_type, reference_audio_path,
+                          reference_sample_text, reference_duration_ms, status,
+                          error_message, device_id))
+                else:
+                    cur.execute("""
+                        INSERT INTO voice_clone_profiles
+                            (device_id, provider, voice_id, voice_type, reference_audio_path,
+                             reference_sample_text, reference_duration_ms, status, error_message)
+                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+                        RETURNING *
+                    """, (device_id, provider, voice_id, voice_type, reference_audio_path,
+                          reference_sample_text, reference_duration_ms, status, error_message))
+
+                conn.commit()
+                row = cur.fetchone()
+                return {"success": True, "data": dict(row) if row else None}
+        except Exception as e:
+            if 'conn' in locals():
+                conn.rollback()
+            return {"success": False, "message": f"操作音色档案失败: {str(e)}"}
+
+    def update_voice_clone_status(self, device_id, status, voice_id=None, error_message=None):
+        """单独更新 status / voice_id（注册回调时使用）"""
+        try:
+            conn = get_postgres_connection()
+            with conn.cursor(cursor_factory=DictCursor) as cur:
+                cur.execute("""
+                    UPDATE voice_clone_profiles SET
+                        status = COALESCE(%s, status),
+                        voice_id = COALESCE(%s, voice_id),
+                        error_message = COALESCE(%s, error_message),
+                        updated_time = CURRENT_TIMESTAMP
+                    WHERE device_id = %s
+                    RETURNING *
+                """, (status, voice_id, error_message, device_id))
+                conn.commit()
+                row = cur.fetchone()
+                return {"success": True, "data": dict(row) if row else None}
+        except Exception as e:
+            if 'conn' in locals():
+                conn.rollback()
+            return {"success": False, "message": str(e)}
+
+    def touch_voice_clone_used(self, device_id):
+        """合成成功后更新 last_used_time（fire-and-forget）"""
+        try:
+            conn = get_postgres_connection()
+            with conn.cursor() as cur:
+                cur.execute("""
+                    UPDATE voice_clone_profiles SET last_used_time = CURRENT_TIMESTAMP
+                    WHERE device_id = %s
+                """, (device_id,))
+                conn.commit()
+                return {"success": True}
+        except Exception as e:
+            if 'conn' in locals():
+                conn.rollback()
+            return {"success": False, "message": str(e)}
